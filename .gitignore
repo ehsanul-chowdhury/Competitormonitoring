@@ -1,0 +1,47 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+/.next/
+/out/
+/build
+dist/
+.turbo/
+
+# generated Prisma clients (regenerate with `prisma generate`)
+generated/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# testing
+coverage/
+
+# env files — the placeholder templates carry no secrets and document setup
+.env*
+!.env.example
+
+# scan pipeline output (snapshots, avatars)
+/storage/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors
+.vscode/
+.idea/
+*.swp
+
+# os
+.DS_Store
+Thumbs.db
+
+# keys
+*.pem
+
+# agent tooling
+.claude/

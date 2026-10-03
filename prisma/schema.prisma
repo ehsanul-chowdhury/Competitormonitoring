@@ -1,0 +1,424 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String   @id
+  name          String?
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions Session[]
+  accounts Account[]
+
+  workspaceMemberships    WorkspaceMember[]
+  sentInvitations         WorkspaceInvitation[]
+  createdCompetitors      Competitor[]             @relation("CompetitorCreatedBy")
+  triggeredScans          Scan[]
+  changeEventFeedback     ChangeEvent[]            @relation("ChangeEventFeedbackBy")
+  notificationPreferences NotificationPreference[]
+  notificationDeliveries  NotificationDelivery[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
+
+enum WorkspaceRole {
+  owner
+  admin
+  member
+
+  @@map("workspace_role")
+}
+
+model Workspace {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  slug           String   @unique
+  // What this team sells, how they price and how they position. The analysis
+  // needs it to say "35% cheaper than your comparable plan" rather than only
+  // describing the competitor's page in isolation.
+  productProfile String?  @map("product_profile")
+  plan           String   @default("trial")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  members                 WorkspaceMember[]
+  invitations             WorkspaceInvitation[]
+  competitors             Competitor[]
+  trackedPages            TrackedPage[]
+  scans                   Scan[]
+  pageSnapshots           PageSnapshot[]
+  changeEvents            ChangeEvent[]
+  notificationPreferences NotificationPreference[]
+  notificationDeliveries  NotificationDelivery[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id")
+  role        WorkspaceRole @default(member)
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId])
+  @@index([userId], map: "idx_workspace_members_user")
+  @@map("workspace_members")
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  rejected
+  canceled
+
+  @@map("invitation_status")
+}
+
+model WorkspaceInvitation {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String           @map("workspace_id") @db.Uuid
+  email       String
+  role        WorkspaceRole    @default(member)
+  status      InvitationStatus @default(pending)
+  invitedBy   String           @map("invited_by")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  expiresAt   DateTime         @map("expires_at")
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inviterUser User      @relation(fields: [invitedBy], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId], map: "idx_workspace_invitations_workspace")
+  @@index([email], map: "idx_workspace_invitations_email")
+  @@map("workspace_invitations")
+}
+
+enum PageCategory {
+  pricing
+  product
+  positioning
+  other
+  homepage
+  blog
+  customer_story
+  integration
+
+  @@map("page_category")
+}
+
+model Competitor {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String
+  domain      String
+  logoUrl     String?  @map("logo_url")
+  logoColor   String?  @map("logo_color")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdBy   String?  @map("created_by")
+
+  workspace               Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUser           User?                    @relation("CompetitorCreatedBy", fields: [createdBy], references: [id])
+  trackedPages            TrackedPage[]
+  changeEvents            ChangeEvent[]
+  notificationPreferences NotificationPreference[]
+
+  @@unique([workspaceId, domain])
+  @@index([workspaceId], map: "idx_competitors_workspace")
+  @@index([createdBy], map: "idx_competitors_created_by")
+  @@map("competitors")
+}
+
+model TrackedPage {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String       @map("workspace_id") @db.Uuid
+  competitorId        String       @map("competitor_id") @db.Uuid
+  url                 String
+  category            PageCategory @default(other)
+  label               String?
+  isActive            Boolean      @default(true) @map("is_active")
+  scanIntervalMinutes Int          @default(720) @map("scan_interval_minutes")
+  nextScanAt          DateTime     @default(now()) @map("next_scan_at")
+  lastScanStatus      String?      @map("last_scan_status")
+  lastScannedAt       DateTime?    @map("last_scanned_at")
+  robotsDisallowed    Boolean      @default(false) @map("robots_disallowed")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  isRemoved           Boolean      @default(false) @map("is_removed")
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  competitor    Competitor     @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  scans         Scan[]
+  pageSnapshots PageSnapshot[]
+  changeEvents  ChangeEvent[]
+
+  @@unique([workspaceId, competitorId, url])
+  @@index([workspaceId, competitorId], map: "idx_tracked_pages_workspace_competitor")
+  @@index([competitorId], map: "idx_tracked_pages_competitor")
+  @@index([nextScanAt], map: "idx_tracked_pages_due")
+  @@map("tracked_pages")
+}
+
+enum ScanTrigger {
+  cron
+  manual
+
+  @@map("scan_trigger")
+}
+
+enum ScanStatus {
+  running
+  success
+  error
+  skipped_robots
+  skipped_no_change
+  removed
+
+  @@map("scan_status")
+}
+
+model Scan {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String      @map("workspace_id") @db.Uuid
+  trackedPageId String      @map("tracked_page_id") @db.Uuid
+  trigger       ScanTrigger
+  triggeredBy   String?     @map("triggered_by")
+  status        ScanStatus  @default(running)
+  httpStatus    Int?        @map("http_status")
+  errorMessage  String?     @map("error_message")
+  startedAt     DateTime    @default(now()) @map("started_at")
+  finishedAt    DateTime?   @map("finished_at")
+  durationMs    Int?        @map("duration_ms")
+
+  workspace       Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  trackedPage     TrackedPage    @relation(fields: [trackedPageId], references: [id], onDelete: Cascade)
+  triggeredByUser User?          @relation(fields: [triggeredBy], references: [id])
+  pageSnapshots   PageSnapshot[]
+  changeEvents    ChangeEvent[]
+
+  @@index([trackedPageId, startedAt(sort: Desc)], map: "idx_scans_page_started")
+  @@index([workspaceId, startedAt(sort: Desc)], map: "idx_scans_workspace_started")
+  @@index([triggeredBy], map: "idx_scans_triggered_by")
+  @@map("scans")
+}
+
+model PageSnapshot {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  trackedPageId       String   @map("tracked_page_id") @db.Uuid
+  scanId              String   @map("scan_id") @db.Uuid
+  contentHash         String   @map("content_hash")
+  extractedTextLength Int      @map("extracted_text_length")
+  storagePath         String?  @map("storage_path")
+  fetchedAt           DateTime @default(now()) @map("fetched_at")
+
+  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  trackedPage        TrackedPage   @relation(fields: [trackedPageId], references: [id], onDelete: Cascade)
+  scan               Scan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  changeEventsBefore ChangeEvent[] @relation("ChangeEventBefore")
+  changeEventsAfter  ChangeEvent[] @relation("ChangeEventAfter")
+
+  @@index([trackedPageId, fetchedAt(sort: Desc)], map: "idx_page_snapshots_page_fetched")
+  @@index([trackedPageId, contentHash], map: "idx_page_snapshots_page_hash")
+  @@index([scanId], map: "idx_page_snapshots_scan")
+  @@index([workspaceId], map: "idx_page_snapshots_workspace")
+  @@map("page_snapshots")
+}
+
+enum ChangePriority {
+  low
+  medium
+  high
+  critical
+
+  @@map("change_priority")
+}
+
+enum ChangeFeedback {
+  useful
+  dismissed
+
+  @@map("change_feedback")
+}
+
+model ChangeEvent {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId      String  @map("workspace_id") @db.Uuid
+  competitorId     String  @map("competitor_id") @db.Uuid
+  trackedPageId    String  @map("tracked_page_id") @db.Uuid
+  scanId           String  @map("scan_id") @db.Uuid
+  beforeSnapshotId String? @map("before_snapshot_id") @db.Uuid
+  afterSnapshotId  String  @map("after_snapshot_id") @db.Uuid
+
+  category           PageCategory
+  priority           ChangePriority
+  summary            String
+  whyItMatters       String         @map("why_it_matters")
+  recommendedAction  String         @map("recommended_action")
+  // Analysis returns a short playbook rather than one instruction. The
+  // singular field above is retained so older rows still render, and readers
+  // fall back to it when this list is empty.
+  recommendedActions String[]       @map("recommended_actions")
+
+  evidenceBefore String? @map("evidence_before")
+  evidenceAfter  String  @map("evidence_after")
+  diffExcerpt    String? @map("diff_excerpt")
+
+  aiModelUsed String? @map("ai_model_used")
+  aiCacheHit  Boolean @default(false) @map("ai_cache_hit")
+
+  feedback   ChangeFeedback?
+  feedbackBy String?         @map("feedback_by")
+  feedbackAt DateTime?       @map("feedback_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  // search_vector is a database-generated stored tsvector column. Prisma has no
+  // generated-column type, so it is not modeled here and is queried via
+  // $queryRaw only.
+
+  workspace              Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  competitor             Competitor             @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  trackedPage            TrackedPage            @relation(fields: [trackedPageId], references: [id], onDelete: Cascade)
+  scan                   Scan                   @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  beforeSnapshot         PageSnapshot?          @relation("ChangeEventBefore", fields: [beforeSnapshotId], references: [id])
+  afterSnapshot          PageSnapshot           @relation("ChangeEventAfter", fields: [afterSnapshotId], references: [id])
+  feedbackByUser         User?                  @relation("ChangeEventFeedbackBy", fields: [feedbackBy], references: [id])
+  notificationDeliveries NotificationDelivery[]
+
+  @@index([workspaceId, createdAt(sort: Desc)], map: "idx_change_events_workspace_created")
+  @@index([workspaceId, competitorId, createdAt(sort: Desc)], map: "idx_change_events_competitor_created")
+  @@index([workspaceId, priority], map: "idx_change_events_priority")
+  @@index([workspaceId, category], map: "idx_change_events_category")
+  @@index([afterSnapshotId], map: "idx_change_events_after_snapshot")
+  @@index([beforeSnapshotId], map: "idx_change_events_before_snapshot")
+  @@index([competitorId], map: "idx_change_events_competitor")
+  @@index([feedbackBy], map: "idx_change_events_feedback_by")
+  @@index([scanId], map: "idx_change_events_scan")
+  @@index([trackedPageId], map: "idx_change_events_tracked_page")
+  @@map("change_events")
+}
+
+enum AiTaskType {
+  noise_filter
+  categorize_priority
+  summarize
+
+  @@map("ai_task_type")
+}
+
+model AiCache {
+  contentHash String     @map("content_hash")
+  taskType    AiTaskType @map("task_type")
+  model       String
+  response    Json
+  createdAt   DateTime   @default(now()) @map("created_at")
+  hitCount    Int        @default(1) @map("hit_count")
+  lastUsedAt  DateTime   @default(now()) @map("last_used_at")
+
+  @@id([contentHash, taskType, model])
+  @@map("ai_cache")
+}
+
+model NotificationPreference {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String         @map("workspace_id") @db.Uuid
+  userId       String         @map("user_id")
+  competitorId String?        @map("competitor_id") @db.Uuid
+  minPriority  ChangePriority @default(medium) @map("min_priority")
+  channel      String         @default("email")
+  isEnabled    Boolean        @default(true) @map("is_enabled")
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId, competitorId])
+  @@index([workspaceId, userId], map: "idx_notification_preferences_workspace_user")
+  @@index([competitorId], map: "idx_notification_preferences_competitor")
+  @@index([userId], map: "idx_notification_preferences_user")
+  @@map("notification_preferences")
+}
+
+enum DeliveryStatus {
+  queued
+  sent
+  failed
+  skipped_muted
+
+  @@map("delivery_status")
+}
+
+model NotificationDelivery {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String         @map("workspace_id") @db.Uuid
+  changeEventId     String         @map("change_event_id") @db.Uuid
+  userId            String         @map("user_id")
+  channel           String         @default("email")
+  status            DeliveryStatus @default(queued)
+  providerMessageId String?        @map("provider_message_id")
+  errorMessage      String?        @map("error_message")
+  sentAt            DateTime?      @map("sent_at")
+  createdAt         DateTime       @default(now()) @map("created_at")
+
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  changeEvent ChangeEvent @relation(fields: [changeEventId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([changeEventId], map: "idx_notification_deliveries_change_event")
+  @@index([workspaceId, createdAt(sort: Desc)], map: "idx_notification_deliveries_workspace_created")
+  @@index([userId], map: "idx_notification_deliveries_user")
+  @@map("notification_deliveries")
+}

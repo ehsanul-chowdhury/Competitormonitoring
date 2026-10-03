@@ -1,0 +1,22 @@
+# dependencies
+/node_modules
+
+# build output
+/dist
+
+# generated Prisma Client (regenerate with `prisma generate`)
+/generated
+
+# env files
+.env
+!.env.example
+
+# testing
+/coverage
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+pnpm-debug.log*
+*.tsbuildinfo
